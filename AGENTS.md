@@ -38,11 +38,25 @@ semântica `match_historical_reflection_chunks`.
 autenticado (`verify_jwt = true`), nunca expõem chaves ao navegador:
 
 - `generate-reflection` — o Motor Reflexivo: lê a fonte + comentário do dia,
-  busca reflexões históricas por similaridade semântica e gera o texto via
-  OpenAI (`gpt-4o-mini` + `text-embedding-3-small`).
+  busca reflexões históricas por similaridade semântica (executada pelo
+  cliente autenticado do usuário, não pelo admin — `auth.uid()` só resolve
+  ali) e gera o texto via OpenAI (`gpt-4o-mini` + `text-embedding-3-small`).
+  Bloqueia gerar mais uma versão se a sessão já tiver sido aprovada.
 - `transcribe` — transcreve o comentário em áudio via OpenAI.
+- `approve-reflection` — aprovação idempotente: `approved_reflections` tem
+  `UNIQUE(session_id)`, então uma segunda chamada nunca cria outro registro
+  nem sobrescreve a aprovação existente, só a devolve. Marca a geração
+  escolhida como `approved` e as demais da sessão como `superseded`.
 - `generate-audio` — narra a reflexão aprovada via ElevenLabs e guarda o
-  resultado no Storage.
+  resultado no Storage. Usa `claim_audio_job()` (função Postgres) para
+  garantir que só uma invocação por vez chega a chamar o ElevenLabs para o
+  mesmo `approved_reflection_id`, mesmo sob concorrência real.
+
+**Máquina de estados de `reflection_sessions`:** `draft` → `processing` →
+`review` → `approved` → `audio_processing` → `completed`, com reversão ao
+status anterior em qualquer falha recuperável. Depois de `approved`, triggers
+no banco (não só RLS) bloqueiam UPDATE em `daily_sources`/
+`reflection_comments` e INSERT em `generated_reflections` para aquela sessão.
 
 **Secrets necessários** (Dashboard → Project Settings → Edge Functions →
 Secrets, ou `supabase secrets set`) — os valores já estão configurados no
