@@ -8,7 +8,7 @@ import { capitalize, longDate } from "@/lib/format";
 import { useSession } from "@/lib/auth";
 import { listApproved, type ApprovedReflection } from "@/lib/db";
 
-export const Route = createFileRoute("/_authenticated/historico")({
+export const Route = createFileRoute("/_authenticated/historico/")({
   head: () => ({
     meta: [
       { title: "Histórico de reflexões — Memória Reflexiva" },
