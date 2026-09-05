@@ -11,6 +11,13 @@
 
 <!-- LOVABLE:END -->
 
+## Antes de qualquer alteração
+
+Leia `docs/ESPECIFICACAO.md` — é a especificação oficial do produto, escrita
+pelo próprio autor (Geovane). Ela define o princípio central do produto, as
+regras de negócio (RN-001 a RN-012, todas obrigatórias) e o mapa de telas.
+Trate-a como fonte de verdade acima de qualquer suposição.
+
 ## Backend (Supabase)
 
 O projeto Supabase (`dxigfruylgfxnosmogky`) já está totalmente configurado e
