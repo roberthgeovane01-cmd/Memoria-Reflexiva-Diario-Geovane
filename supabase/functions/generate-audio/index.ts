@@ -35,8 +35,18 @@ function getSecretKey(): string {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 
+type ClaimResult = {
+  id: string;
+  status: string;
+  storage_path: string | null;
+  claimed_now: boolean;
+};
+
 // So narra texto ja aprovado (RN-007). Falhas aqui nunca apagam a reflexao
-// escrita (RN-009) - o job fica marcado como failed e pode ser tentado de novo.
+// escrita (RN-009) - o job fica marcado como failed e pode ser tentado de
+// novo. claim_audio_job (Postgres) garante que so uma invocacao por vez
+// chega a chamar o ElevenLabs para o mesmo approved_reflection_id, mesmo sob
+// concorrencia real.
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return jsonResponse({ error: "method_not_allowed" }, 405);
@@ -75,46 +85,38 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "not_found" }, 404);
   }
 
-  const { data: existingJob } = await admin
-    .from("generated_audio")
-    .select("id, status, storage_path")
-    .eq("approved_reflection_id", approved.id)
-    .maybeSingle();
-
-  if (existingJob?.status === "ready" && existingJob.storage_path) {
-    const signed = await admin.storage
-      .from("reflection-output-audio")
-      .createSignedUrl(existingJob.storage_path, 3600);
-    return jsonResponse({
-      id: existingJob.id,
-      storagePath: existingJob.storage_path,
-      url: signed.data?.signedUrl ?? null,
-    });
+  const { data: claimRows, error: claimError } = await admin.rpc("claim_audio_job", {
+    p_approved_reflection_id: approved.id,
+    p_session_id: approved.session_id,
+    p_user_id: userId,
+  });
+  if (claimError || !claimRows?.length) {
+    console.error("claim_audio_job_failed", claimError);
+    return jsonResponse({ error: "job_create_failed" }, 500);
   }
+  const claim = claimRows[0] as ClaimResult;
 
-  let jobId = existingJob?.id;
-  if (!jobId) {
-    const { data: created, error: createError } = await admin
-      .from("generated_audio")
-      .insert({
-        approved_reflection_id: approved.id,
-        session_id: approved.session_id,
-        user_id: userId,
-        status: "processing",
-      })
-      .select("id")
-      .single();
-    if (createError || !created) {
-      console.error("create_audio_job_failed", createError);
-      return jsonResponse({ error: "job_create_failed" }, 500);
+  if (!claim.claimed_now) {
+    if (claim.status === "ready" && claim.storage_path) {
+      const signed = await admin.storage
+        .from("reflection-output-audio")
+        .createSignedUrl(claim.storage_path, 3600);
+      return jsonResponse({
+        id: claim.id,
+        storagePath: claim.storage_path,
+        url: signed.data?.signedUrl ?? null,
+      });
     }
-    jobId = created.id;
-  } else {
-    await admin
-      .from("generated_audio")
-      .update({ status: "processing", error_message: null })
-      .eq("id", jobId);
+    // Outra invocacao ja esta processando este mesmo audio agora — nao
+    // chamamos o ElevenLabs de novo.
+    return jsonResponse({ error: "audio_already_processing" }, 409);
   }
+
+  const jobId = claim.id;
+  await admin
+    .from("reflection_sessions")
+    .update({ status: "audio_processing" })
+    .eq("id", approved.session_id);
 
   let ttsRes: Response;
   try {
@@ -137,6 +139,12 @@ Deno.serve(async (req) => {
       .from("generated_audio")
       .update({ status: "failed", error_message: "network_error" })
       .eq("id", jobId);
+    // Falha e recuperavel: a reflexao aprovada continua intacta (RN-009), a
+    // sessao volta a "approved" para permitir nova tentativa de audio.
+    await admin
+      .from("reflection_sessions")
+      .update({ status: "approved" })
+      .eq("id", approved.session_id);
     return jsonResponse({ error: "audio_generation_failed" }, 502);
   }
 
@@ -147,6 +155,10 @@ Deno.serve(async (req) => {
       .from("generated_audio")
       .update({ status: "failed", error_message: `elevenlabs_${ttsRes.status}` })
       .eq("id", jobId);
+    await admin
+      .from("reflection_sessions")
+      .update({ status: "approved" })
+      .eq("id", approved.session_id);
     return jsonResponse({ error: "audio_generation_failed" }, 502);
   }
 
@@ -163,6 +175,10 @@ Deno.serve(async (req) => {
       .from("generated_audio")
       .update({ status: "failed", error_message: "storage_upload_failed" })
       .eq("id", jobId);
+    await admin
+      .from("reflection_sessions")
+      .update({ status: "approved" })
+      .eq("id", approved.session_id);
     return jsonResponse({ error: "storage_upload_failed" }, 500);
   }
 
@@ -175,6 +191,11 @@ Deno.serve(async (req) => {
       error_message: null,
     })
     .eq("id", jobId);
+
+  await admin
+    .from("reflection_sessions")
+    .update({ status: "completed" })
+    .eq("id", approved.session_id);
 
   const signed = await admin.storage
     .from("reflection-output-audio")

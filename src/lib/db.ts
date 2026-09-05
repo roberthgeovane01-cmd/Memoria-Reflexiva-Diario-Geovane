@@ -208,6 +208,12 @@ export async function saveEdit(args: {
   return true;
 }
 
+/**
+ * Aprovação passa pela Edge Function approve-reflection: ela garante
+ * idempotência de verdade via a constraint UNIQUE(session_id) no banco (uma
+ * chamada repetida nunca cria outro registro nem sobrescreve a aprovação já
+ * existente) e marca a geração escolhida/demais gerações da sessão.
+ */
 export async function approveReflection(args: {
   userId: string;
   sessionId: string;
@@ -216,24 +222,16 @@ export async function approveReflection(args: {
   body: string;
 }) {
   if (isDemoActive()) return addDemoApproved({ title: args.title, body: args.body });
-  const res = await supabase
-    .from("approved_reflections")
-    .insert({
-      user_id: args.userId,
-      session_id: args.sessionId,
-      source_generation_id: args.sourceGenerationId,
+  const { data, error } = await supabase.functions.invoke<{ id: string }>("approve-reflection", {
+    body: {
+      sessionId: args.sessionId,
+      generatedReflectionId: args.sourceGenerationId,
       title: args.title,
       body: args.body,
-      approved_at: new Date().toISOString(),
-    })
-    .select("id")
-    .maybeSingle();
-  if (res.error) return fail("approveReflection", res.error);
-  await supabase
-    .from("reflection_sessions")
-    .update({ status: "approved" })
-    .eq("id", args.sessionId);
-  return (res.data?.id as string | undefined) ?? null;
+    },
+  });
+  if (error || !data?.id) return fail("approveReflection", error ?? new Error("no id returned"));
+  return data.id;
 }
 
 export async function listApproved(userId: string): Promise<ApprovedReflection[]> {

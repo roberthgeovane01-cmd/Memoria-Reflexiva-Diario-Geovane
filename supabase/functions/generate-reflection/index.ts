@@ -69,6 +69,8 @@ Deno.serve(async (req) => {
   const versionNumber = Number.isFinite(body.versionNumber) ? Number(body.versionNumber) : 1;
   if (!sessionId) return jsonResponse({ error: "missing_session_id" }, 400);
 
+  // Cliente com o JWT do usuario: usado para tudo que precisa respeitar RLS
+  // de verdade, em especial a busca semantica (auth.uid() so resolve aqui).
   const userClient = createClient(SUPABASE_URL, getPublishableKey(), {
     global: { headers: { Authorization: authHeader } },
   });
@@ -80,12 +82,27 @@ Deno.serve(async (req) => {
 
   const { data: session, error: sessionError } = await admin
     .from("reflection_sessions")
-    .select("id, user_id")
+    .select("id, user_id, status")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionError || !session || session.user_id !== userId) {
     return jsonResponse({ error: "session_not_found" }, 404);
   }
+
+  // Uma sessao aprovada e um fato consumado (RN-006): nao permitimos gerar
+  // "mais uma versao" por cima dela. O trigger no banco tambem barra isso
+  // (defesa em profundidade), mas aqui devolvemos um erro legivel em vez de
+  // deixar a insercao estourar.
+  const { data: alreadyApproved } = await admin
+    .from("approved_reflections")
+    .select("id")
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (alreadyApproved) {
+    return jsonResponse({ error: "session_already_approved" }, 409);
+  }
+
+  const previousStatus = session.status;
 
   const [sourceRes, commentRes, authorProfileRes] = await Promise.all([
     admin
@@ -115,6 +132,15 @@ Deno.serve(async (req) => {
 
   const styleSummary = authorProfileRes.data?.style_summary?.trim();
 
+  // Sessao entra em processamento so agora que sabemos que ha o minimo para
+  // tentar gerar. Qualquer saida de erro daqui pra frente deve devolver a
+  // sessao ao status anterior (nunca deixa-la travada em "processing").
+  await admin.from("reflection_sessions").update({ status: "processing" }).eq("id", sessionId);
+
+  async function revertSessionStatus() {
+    await admin.from("reflection_sessions").update({ status: previousStatus }).eq("id", sessionId);
+  }
+
   let retrieved: RetrievedChunk[] = [];
   try {
     const embeddingRes = await fetch("https://api.openai.com/v1/embeddings", {
@@ -129,7 +155,12 @@ Deno.serve(async (req) => {
       const embeddingJson = await embeddingRes.json();
       const queryEmbedding = embeddingJson.data?.[0]?.embedding;
       if (Array.isArray(queryEmbedding)) {
-        const { data: matches, error: matchError } = await admin.rpc(
+        // Executado pelo userClient (JWT do usuario), nao pelo admin: a
+        // funcao filtra por auth.uid() internamente, e com a service key
+        // auth.uid() e sempre null - o que fazia o retrieval sempre voltar
+        // vazio mesmo com chunks existentes. Isolamento por usuario continua
+        // garantido pela própria função (auth.uid() = c.user_id).
+        const { data: matches, error: matchError } = await userClient.rpc(
           "match_historical_reflection_chunks",
           {
             query_embedding: JSON.stringify(queryEmbedding),
@@ -197,11 +228,13 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error("openai_completion_network_error", error);
+    await revertSessionStatus();
     return jsonResponse({ error: "generation_failed" }, 502);
   }
 
   if (!completionRes.ok) {
     console.error("openai_completion_failed", completionRes.status, await completionRes.text());
+    await revertSessionStatus();
     return jsonResponse({ error: "generation_failed" }, 502);
   }
 
@@ -212,12 +245,16 @@ Deno.serve(async (req) => {
     parsed = JSON.parse(raw);
   } catch {
     console.error("invalid_model_output", raw);
+    await revertSessionStatus();
     return jsonResponse({ error: "invalid_model_output" }, 502);
   }
 
   const title = (parsed.title ?? "Reflexao de hoje").trim();
   const generatedBody = (parsed.body ?? "").trim();
-  if (!generatedBody) return jsonResponse({ error: "empty_generation" }, 502);
+  if (!generatedBody) {
+    await revertSessionStatus();
+    return jsonResponse({ error: "empty_generation" }, 502);
+  }
 
   const { data: inserted, error: insertError } = await admin
     .from("generated_reflections")
@@ -241,6 +278,7 @@ Deno.serve(async (req) => {
 
   if (insertError || !inserted) {
     console.error("insert_generated_reflection_failed", insertError);
+    await revertSessionStatus();
     return jsonResponse({ error: "save_failed" }, 500);
   }
 
@@ -258,6 +296,9 @@ Deno.serve(async (req) => {
     const { error: refError } = await admin.from("retrieval_references").insert(rows);
     if (refError) console.error("insert_retrieval_references_failed", refError);
   }
+
+  // Geracao disponivel para revisao.
+  await admin.from("reflection_sessions").update({ status: "review" }).eq("id", sessionId);
 
   return jsonResponse({ id: inserted.id, title, body: generatedBody });
 });
