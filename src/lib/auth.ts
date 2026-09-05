@@ -54,7 +54,6 @@ export function useSession() {
   if (session?.user) return { session, user: session.user, loading: false, isDemo: false };
   if (demo) return { session: null, user: demoUser, loading: false, isDemo: true };
   return { session, user: null, loading, isDemo: false };
-
 }
 
 /** Perfil em public.profiles — criado automaticamente por trigger no cadastro. */
@@ -85,9 +84,7 @@ export function useProfile(user: User | null) {
   }, [user]);
 
   const firstName =
-    profile?.display_name?.trim().split(/\s+/)[0] ??
-    user?.email?.split("@")[0] ??
-    "você";
+    profile?.display_name?.trim().split(/\s+/)[0] ?? user?.email?.split("@")[0] ?? "você";
 
   return { profile, firstName };
 }

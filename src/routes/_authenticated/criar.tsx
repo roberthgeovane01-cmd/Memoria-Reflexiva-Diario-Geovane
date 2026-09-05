@@ -182,8 +182,8 @@ function CreateFlow() {
       textComment: draft.mode === "write" ? draft.comment.trim() : null,
       transcriptEdited: draft.mode === "speak" ? draft.transcript.trim() : null,
       audioStoragePath: audioPath,
-      audioMimeType: audioPath ? recording?.mimeType ?? null : null,
-      audioDurationSeconds: audioPath ? recording?.seconds ?? null : null,
+      audioMimeType: audioPath ? (recording?.mimeType ?? null) : null,
+      audioDurationSeconds: audioPath ? (recording?.seconds ?? null) : null,
     });
     setBusy(false);
     if (!ok) warnNotSaved();
@@ -519,7 +519,10 @@ function Processing({ onDone }: { onDone: () => void }) {
   return (
     <section className="card-soft flex min-h-[380px] flex-col items-center justify-center p-10 text-center">
       <p className="eyebrow">Preparando</p>
-      <p aria-live="polite" className="mt-4 font-display text-xl font-bold text-primary sm:text-2xl">
+      <p
+        aria-live="polite"
+        className="mt-4 font-display text-xl font-bold text-primary sm:text-2xl"
+      >
         {messages[index]}
       </p>
       <div className="mt-8 h-[3px] w-64 overflow-hidden rounded-full bg-secondary">

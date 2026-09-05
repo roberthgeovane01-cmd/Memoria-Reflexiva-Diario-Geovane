@@ -171,8 +171,8 @@ function AuthPage() {
             <div className="mt-10 rounded-lg border border-border bg-card p-5">
               <p className="eyebrow">Modo de teste</p>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Acesso temporário de demonstração, só neste navegador. Nada é enviado ou lido da
-                sua base de reflexões.
+                Acesso temporário de demonstração, só neste navegador. Nada é enviado ou lido da sua
+                base de reflexões.
               </p>
               <Button
                 type="button"

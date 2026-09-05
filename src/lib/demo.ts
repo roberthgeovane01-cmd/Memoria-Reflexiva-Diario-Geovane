@@ -57,7 +57,6 @@ export function enableDemo() {
   notify();
 }
 
-
 /** Sai do teste sem apagar rascunhos locais. */
 export function disableDemo() {
   try {
