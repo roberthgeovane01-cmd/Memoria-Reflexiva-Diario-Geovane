@@ -18,6 +18,11 @@ export type Draft = {
   /** Versões registradas no servidor, quando a política permite. */
   generationV1Id: string | null;
   generationV2Id: string | null;
+  /** Texto produzido pelo Motor Reflexivo (ou pelo modo de teste) para cada versão. */
+  generatedV1: { title: string; paragraphs: string[] } | null;
+  generatedV2: { title: string; paragraphs: string[] } | null;
+  /** Reflexão aprovada no servidor — usada para pedir a narração. */
+  approvedReflectionId: string | null;
 };
 
 export const emptyDraft: Draft = {
@@ -34,6 +39,9 @@ export const emptyDraft: Draft = {
   sessionId: null,
   generationV1Id: null,
   generationV2Id: null,
+  generatedV1: null,
+  generatedV2: null,
+  approvedReflectionId: null,
 };
 
 // Rascunho local: apenas rede de segurança offline. A verdade fica no servidor.

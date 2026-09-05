@@ -10,7 +10,6 @@ import {
   Home,
   Pencil,
   RefreshCw,
-  Play,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -33,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { supabase } from "@/integrations/supabase/client";
 import { useSession } from "@/lib/auth";
 import {
   approveReflection,
@@ -40,13 +40,26 @@ import {
   loadSessionContent,
   saveComment,
   saveEdit,
-  saveGeneratedVersion,
   saveSource,
   uploadCommentAudio,
 } from "@/lib/db";
+import { isDemoActive } from "@/lib/demo";
 import { capitalize, longDate } from "@/lib/format";
 import { sampleReceived, sampleTranscript, versionOne, versionTwo } from "@/lib/reflections";
 import { useDraft, type Draft } from "@/lib/useDraft";
+
+function splitParagraphs(text: string) {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+type GenerationResult = {
+  ok: boolean;
+  id: string | null;
+  content: { title: string; paragraphs: string[] } | null;
+};
 
 export const Route = createFileRoute("/_authenticated/criar")({
   head: () => ({
@@ -112,6 +125,9 @@ function CreateFlow() {
           approved: false,
           generationV1Id: null,
           generationV2Id: null,
+          generatedV1: null,
+          generatedV2: null,
+          approvedReflectionId: null,
         });
       }
       const content = await loadSessionContent(session.id);
@@ -190,19 +206,60 @@ function CreateFlow() {
     update({ step: "processing" });
   }
 
-  // O texto ainda é montado localmente (futuro endpoint de backend fará a geração real).
-  async function registerVersion(version: 1 | 2) {
-    if (!user || !sessionId) return null;
-    const base = version === 1 ? versionOne : versionTwo;
-    const id = await saveGeneratedVersion({
-      userId: user.id,
-      sessionId,
-      versionNumber: version,
-      title: base.title,
-      body: base.paragraphs.join("\n\n"),
-    });
-    return id;
+  // Pede ao Motor Reflexivo (Edge Function generate-reflection) uma nova versão.
+  // No modo de teste, nada sai do navegador — usamos os textos de exemplo.
+  async function registerVersion(version: 1 | 2): Promise<GenerationResult> {
+    if (!user || !sessionId) return { ok: false, id: null, content: null };
+
+    if (isDemoActive()) {
+      const base = version === 1 ? versionOne : versionTwo;
+      update(version === 1 ? { generatedV1: base } : { generatedV2: base });
+      return { ok: true, id: null, content: base };
+    }
+
+    const { data, error } = await supabase.functions.invoke<{
+      id: string;
+      title: string;
+      body: string;
+    }>("generate-reflection", { body: { sessionId, versionNumber: version } });
+
+    if (error || !data?.body) {
+      console.warn("[reflexao] generate-reflection", error);
+      return { ok: false, id: null, content: null };
+    }
+
+    const content = { title: data.title, paragraphs: splitParagraphs(data.body) };
+    update(
+      version === 1
+        ? { generatedV1: content, generationV1Id: data.id }
+        : { generatedV2: content, generationV2Id: data.id },
+    );
+    return { ok: true, id: data.id, content };
   }
+
+  const [genState, setGenState] = useState<"idle" | "running" | "error">("idle");
+  const processingStarted = useRef(false);
+
+  async function runGeneration() {
+    setGenState("running");
+    const minDelay = new Promise((resolve) => setTimeout(resolve, messages.length * 1100));
+    const [result] = await Promise.all([registerVersion(1), minDelay]);
+    if (!result.ok) {
+      setGenState("error");
+      return;
+    }
+    setGenState("idle");
+    update({ step: "review", generationV1Id: result.id ?? draft.generationV1Id });
+  }
+
+  useEffect(() => {
+    if (draft.step === "processing" && !processingStarted.current) {
+      processingStarted.current = true;
+      void runGeneration();
+    }
+    if (draft.step !== "processing") processingStarted.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.step]);
 
   if (!hydrated) {
     return (
@@ -239,14 +296,15 @@ function CreateFlow() {
               onBack={() => update({ step: "source" })}
             />
           )}
-          {draft.step === "processing" && (
-            <Processing
-              onDone={async () => {
-                const id = draft.generationV1Id ?? (await registerVersion(1));
-                update({ step: "review", generationV1Id: id ?? draft.generationV1Id });
-              }}
-            />
-          )}
+          {draft.step === "processing" &&
+            (genState === "error" ? (
+              <ProcessingError
+                onRetry={() => void runGeneration()}
+                onBack={() => update({ step: "comment" })}
+              />
+            ) : (
+              <Processing />
+            ))}
           {draft.step === "review" && (
             <ReviewStep
               draft={draft}
@@ -258,7 +316,12 @@ function CreateFlow() {
           )}
           {draft.step === "audio" && (
             <AudioReady
-              audioUrl={recording?.url ?? null}
+              approvedReflectionId={draft.approvedReflectionId}
+              demoAudioUrl={recording?.url ?? null}
+              title={
+                (draft.version === 1 ? draft.generatedV1 : draft.generatedV2)?.title ??
+                "Reflexão de hoje"
+              }
               onRestart={() => {
                 reset();
                 navigate({ to: "/" });
@@ -383,6 +446,39 @@ function CommentStep({
 }) {
   const canContinue =
     draft.mode === "write" ? draft.comment.trim().length > 4 : draft.transcript.trim().length > 4;
+  const [transcribing, setTranscribing] = useState(false);
+
+  async function handleRecording(result: RecordingResult | null) {
+    onRecording(result);
+    if (!result) return;
+
+    if (isDemoActive()) {
+      if (!draft.transcript) update({ transcript: sampleTranscript });
+      toast("Texto da fala pronto para revisão");
+      return;
+    }
+
+    setTranscribing(true);
+    const form = new FormData();
+    form.append(
+      "audio",
+      result.blob,
+      result.mimeType.includes("mp4") ? "comentario.m4a" : "comentario.webm",
+    );
+    const { data, error } = await supabase.functions.invoke<{ text: string }>("transcribe", {
+      body: form,
+    });
+    setTranscribing(false);
+
+    if (error || !data?.text) {
+      toast("Não conseguimos transcrever agora", {
+        description: "Você pode escrever seu comentário diretamente aqui embaixo.",
+      });
+      return;
+    }
+    update({ transcript: data.text });
+    toast("Texto da fala pronto para revisão");
+  }
 
   return (
     <section className="card-soft p-6 sm:p-9">
@@ -434,14 +530,12 @@ function CommentStep({
         </div>
       ) : (
         <div className="mt-6 space-y-5">
-          <VoiceRecorder
-            onFinished={(result) => {
-              onRecording(result);
-              if (!result) return;
-              if (!draft.transcript) update({ transcript: sampleTranscript });
-              toast("Texto da fala pronto para revisão");
-            }}
-          />
+          <VoiceRecorder onFinished={(result) => void handleRecording(result)} />
+          {transcribing && (
+            <p aria-live="polite" className="text-sm text-muted-foreground">
+              Transcrevendo sua fala…
+            </p>
+          )}
           {draft.transcript && (
             <div className="space-y-2">
               <Label htmlFor="transcricao" className="text-sm font-medium">
@@ -470,7 +564,7 @@ function CommentStep({
         <Button
           size="lg"
           className="h-12 w-full text-base sm:w-auto"
-          disabled={!canContinue || busy}
+          disabled={!canContinue || busy || transcribing}
           onClick={onContinue}
         >
           {busy ? "Guardando…" : "Criar minha reflexão"}
@@ -495,26 +589,15 @@ const messages = [
   "Preparando o texto…",
 ];
 
-function Processing({ onDone }: { onDone: () => void }) {
+function Processing() {
   const [index, setIndex] = useState(0);
-  const done = useRef(false);
 
   useEffect(() => {
     const id = setInterval(() => {
-      setIndex((i) => {
-        if (i >= messages.length - 1) {
-          clearInterval(id);
-          if (!done.current) {
-            done.current = true;
-            setTimeout(onDone, 900);
-          }
-          return i;
-        }
-        return i + 1;
-      });
-    }, 1100);
+      setIndex((i) => (i + 1) % messages.length);
+    }, 1400);
     return () => clearInterval(id);
-  }, [onDone]);
+  }, []);
 
   return (
     <section className="card-soft flex min-h-[380px] flex-col items-center justify-center p-10 text-center">
@@ -535,6 +618,26 @@ function Processing({ onDone }: { onDone: () => void }) {
   );
 }
 
+function ProcessingError({ onRetry, onBack }: { onRetry: () => void; onBack: () => void }) {
+  return (
+    <section className="card-soft flex min-h-[380px] flex-col items-center justify-center gap-4 p-10 text-center">
+      <p className="eyebrow">Não foi dessa vez</p>
+      <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+        Não conseguimos preparar sua reflexão agora. Seu texto e seu comentário continuam guardados
+        — você pode tentar de novo.
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button variant="ghost" onClick={onBack} className="h-12">
+          Voltar
+        </Button>
+        <Button onClick={onRetry} className="h-12">
+          Tentar novamente
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function ReviewStep({
   draft,
   update,
@@ -545,10 +648,11 @@ function ReviewStep({
   draft: Draft;
   update: (p: Partial<Draft>) => void;
   userId: string | null;
-  onCreateVersionTwo: (version: 1 | 2) => Promise<string | null>;
+  onCreateVersionTwo: (version: 1 | 2) => Promise<GenerationResult>;
   onApproved: () => void;
 }) {
-  const base = draft.version === 1 ? versionOne : versionTwo;
+  const generated = draft.version === 1 ? draft.generatedV1 : draft.generatedV2;
+  const base = generated ?? (draft.version === 1 ? versionOne : versionTwo);
   const edited = draft.version === 1 ? draft.editedV1 : draft.editedV2;
   const paragraphs = edited ?? base.paragraphs;
   const [editing, setEditing] = useState(false);
@@ -584,15 +688,16 @@ function ReviewStep({
 
   async function approve() {
     setApproving(true);
+    let approvedId: string | null = null;
     if (userId && draft.sessionId) {
-      const id = await approveReflection({
+      approvedId = await approveReflection({
         userId,
         sessionId: draft.sessionId,
         sourceGenerationId: generationId,
         title: base.title,
         body: paragraphs.join("\n\n"),
       });
-      if (!id) {
+      if (!approvedId) {
         setApproving(false);
         toast("Não conseguimos guardar a aprovação agora", {
           description: "Seu texto continua aqui. Tente novamente em instantes.",
@@ -602,7 +707,7 @@ function ReviewStep({
       onApproved();
     }
     setApproving(false);
-    update({ step: "audio", approved: true });
+    update({ step: "audio", approved: true, approvedReflectionId: approvedId });
     toast("Reflexão aprovada");
   }
 
@@ -698,11 +803,20 @@ function ReviewStep({
                 <AlertDialogAction
                   className="min-h-11"
                   onClick={async () => {
-                    const id = draft.generationV2Id ?? (await onCreateVersionTwo(2));
+                    const result = draft.generationV2Id
+                      ? { ok: true, id: draft.generationV2Id, content: draft.generatedV2 }
+                      : await onCreateVersionTwo(2);
+                    if (!result.ok) {
+                      toast("Não conseguimos gerar uma nova versão agora", {
+                        description: "Tente novamente em instantes.",
+                      });
+                      return;
+                    }
                     update({
                       version: 2,
-                      editedV2: draft.editedV2 ?? versionTwo.paragraphs,
-                      generationV2Id: id ?? draft.generationV2Id,
+                      editedV2:
+                        draft.editedV2 ?? result.content?.paragraphs ?? versionTwo.paragraphs,
+                      generationV2Id: result.id ?? draft.generationV2Id,
                     });
                     toast("Versão 2 criada");
                   }}
@@ -734,18 +848,49 @@ function ReviewStep({
 }
 
 function AudioReady({
-  audioUrl,
+  approvedReflectionId,
+  demoAudioUrl,
+  title,
   onRestart,
   onSeeText,
 }: {
-  audioUrl: string | null;
+  approvedReflectionId: string | null;
+  demoAudioUrl: string | null;
+  title: string;
   onRestart: () => void;
   onSeeText: () => void;
 }) {
+  const skipNetwork = isDemoActive() || !approvedReflectionId;
+  const [state, setState] = useState<"loading" | "ready" | "error">(
+    skipNetwork ? "ready" : "loading",
+  );
+  const [url, setUrl] = useState<string | null>(demoAudioUrl);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (skipNetwork) return;
+    let active = true;
+    setState("loading");
+    supabase.functions
+      .invoke<{ url: string | null }>("generate-audio", { body: { approvedReflectionId } })
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error || !data?.url) {
+          setState("error");
+          return;
+        }
+        setUrl(data.url);
+        setState("ready");
+      });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvedReflectionId, retryKey]);
+
   function download() {
-    toast("Áudio de demonstração", {
-      description: "Nesta fase, a narração final ainda não é gerada.",
-    });
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -753,41 +898,53 @@ function AudioReady({
       <span className="mx-auto grid size-12 place-items-center rounded-md bg-primary text-primary-foreground">
         <CheckCircle2 className="size-7" aria-hidden="true" />
       </span>
-      <h1 className="mt-6 font-display text-2xl font-bold sm:text-3xl">Áudio pronto</h1>
+      <h1 className="mt-6 font-display text-2xl font-bold sm:text-3xl">
+        {state === "ready"
+          ? "Áudio pronto"
+          : state === "loading"
+            ? "Preparando o áudio"
+            : "Texto guardado"}
+      </h1>
       <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-        Sua reflexão foi guardada no seu arquivo.
+        {state === "error"
+          ? "Sua reflexão está guardada, mas não conseguimos gerar a narração agora."
+          : "Sua reflexão foi guardada no seu arquivo."}
       </p>
 
       <div className="mx-auto mt-8 max-w-md rounded-lg border border-border bg-secondary p-5 text-left">
         <p className="eyebrow">{capitalize(longDate(new Date()))}</p>
-        <h2 className="mt-1 font-display text-lg font-bold text-primary">{versionOne.title}</h2>
+        <h2 className="mt-1 font-display text-lg font-bold text-primary">{title}</h2>
         <div className="mt-4">
-          {audioUrl ? (
-            <audio controls src={audioUrl} className="w-full" aria-label="Ouvir narração" />
+          {state === "ready" && url ? (
+            <audio controls src={url} className="w-full" aria-label="Ouvir narração" />
+          ) : state === "loading" ? (
+            <p className="text-sm text-muted-foreground">Isso pode levar alguns instantes…</p>
           ) : (
-            <div className="flex items-center gap-3">
-              <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
-                <Play className="size-4" aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="h-1.5 rounded-full bg-sky/40">
-                  <div className="h-full w-1/3 rounded-full bg-primary" />
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">1:08 / 3:24</p>
-              </div>
-            </div>
+            <p className="text-sm text-muted-foreground">Você pode tentar gerar o áudio de novo.</p>
           )}
         </div>
       </div>
 
       <div className="mx-auto mt-8 max-w-md space-y-3">
-        <Button size="lg" className="h-14 w-full text-base" onClick={download}>
-          <Download className="size-5" aria-hidden="true" />
-          Baixar áudio
-        </Button>
-        <p className="text-xs text-muted-foreground">
-          Nesta versão, a narração é apenas um exemplo.
-        </p>
+        {state === "error" ? (
+          <Button
+            size="lg"
+            className="h-14 w-full text-base"
+            onClick={() => setRetryKey((k) => k + 1)}
+          >
+            Tentar gerar áudio de novo
+          </Button>
+        ) : (
+          <Button
+            size="lg"
+            className="h-14 w-full text-base"
+            disabled={state !== "ready" || !url}
+            onClick={download}
+          >
+            <Download className="size-5" aria-hidden="true" />
+            Baixar áudio
+          </Button>
+        )}
         <div className="flex flex-col gap-2 pt-2 sm:flex-row">
           <Button variant="outline" className="h-12 flex-1" onClick={onSeeText}>
             <FileText className="size-4" aria-hidden="true" />

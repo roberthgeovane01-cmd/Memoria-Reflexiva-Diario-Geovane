@@ -185,34 +185,6 @@ export async function saveComment(args: {
   return true;
 }
 
-/**
- * Registro da versão gerada. A geração do texto continua simulada no cliente
- * (futuro endpoint backend com IA real). Se a política de RLS não permitir a
- * escrita, mantemos apenas o estado local — sem tentar contornar a segurança.
- */
-export async function saveGeneratedVersion(args: {
-  userId: string;
-  sessionId: string;
-  versionNumber: number;
-  title: string;
-  body: string;
-}) {
-  if (isDemoActive()) return null;
-  const res = await supabase
-    .from("generated_reflections")
-    .insert({
-      user_id: args.userId,
-      session_id: args.sessionId,
-      version_number: args.versionNumber,
-      title: args.title,
-      body: args.body,
-    })
-    .select("id")
-    .maybeSingle();
-  if (res.error) return fail("saveGeneratedVersion", res.error);
-  return (res.data?.id as string | undefined) ?? null;
-}
-
 /** Edição de uma versão gerada — só registra quando existe a versão no banco. */
 export async function saveEdit(args: {
   userId: string;
