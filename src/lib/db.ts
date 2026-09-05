@@ -164,10 +164,12 @@ export async function saveComment(args: {
     .eq("session_id", args.sessionId)
     .maybeSingle();
 
+  // A coluna aceita "text" | "audio" | "mixed" (RN da seção 6); o fluxo do
+  // app fala em "write" | "speak" — traduzimos aqui, na borda com o banco.
   const payload: TablesInsert<"reflection_comments"> = {
     user_id: args.userId,
     session_id: args.sessionId,
-    input_mode: args.inputMode,
+    input_mode: args.inputMode === "speak" ? "audio" : "text",
     text_comment: args.textComment,
     transcript_edited: args.transcriptEdited,
   };

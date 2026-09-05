@@ -136,8 +136,8 @@ function CreateFlow() {
         patch.source = content.source.source_author ?? "";
       }
       if (content.comment) {
-        if (content.comment.input_mode === "speak" || content.comment.input_mode === "write") {
-          patch.mode = content.comment.input_mode;
+        if (content.comment.input_mode === "audio" || content.comment.input_mode === "text") {
+          patch.mode = content.comment.input_mode === "audio" ? "speak" : "write";
         }
         if (!current.comment && content.comment.text_comment) {
           patch.comment = content.comment.text_comment;

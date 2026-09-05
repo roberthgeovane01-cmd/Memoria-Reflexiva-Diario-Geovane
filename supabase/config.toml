@@ -1,0 +1,10 @@
+project_id = "dxigfruylgfxnosmogky"
+
+[functions.transcribe]
+verify_jwt = true
+
+[functions.generate-reflection]
+verify_jwt = true
+
+[functions.generate-audio]
+verify_jwt = true
