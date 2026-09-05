@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesInsert } from "@/integrations/supabase/types";
 import {
   addDemoApproved,
   demoSessionId,
@@ -163,7 +164,7 @@ export async function saveComment(args: {
     .eq("session_id", args.sessionId)
     .maybeSingle();
 
-  const payload: Record<string, unknown> = {
+  const payload: TablesInsert<"reflection_comments"> = {
     user_id: args.userId,
     session_id: args.sessionId,
     input_mode: args.inputMode,
@@ -171,9 +172,9 @@ export async function saveComment(args: {
     transcript_edited: args.transcriptEdited,
   };
   if (args.audioStoragePath) {
-    payload["audio_storage_path"] = args.audioStoragePath;
-    payload["audio_mime_type"] = args.audioMimeType ?? null;
-    payload["audio_duration_seconds"] = args.audioDurationSeconds ?? null;
+    payload.audio_storage_path = args.audioStoragePath;
+    payload.audio_mime_type = args.audioMimeType ?? null;
+    payload.audio_duration_seconds = args.audioDurationSeconds ?? null;
   }
 
   const res = existing.data?.id
