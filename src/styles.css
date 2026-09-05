@@ -1,0 +1,129 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Memória Reflexiva — design system V2 "Inteligência Serena"
+ * Branco frio dominante, azul profundo estrutural, azul celeste como acento.
+ */
+
+@theme inline {
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 14px;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-dark: var(--primary-dark);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-sky: var(--sky);
+  --color-sky-foreground: var(--sky-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --font-display: "Libre Baskerville", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --shadow-soft: 0 1px 2px rgb(23 59 99 / 4%), 0 8px 24px -18px rgb(23 59 99 / 16%);
+  --shadow-lift: 0 1px 2px rgb(23 59 99 / 6%), 0 16px 36px -24px rgb(23 59 99 / 20%);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #f7fafc;
+  --foreground: #263746;
+  --card: #ffffff;
+  --card-foreground: #263746;
+  --popover: #ffffff;
+  --popover-foreground: #263746;
+  --primary: #173b63;
+  --primary-foreground: #ffffff;
+  --primary-dark: #0e2a47;
+  --secondary: #edf5fb;
+  --secondary-foreground: #173b63;
+  --muted: #edf5fb;
+  --muted-foreground: #6e7e8d;
+  --accent: #edf5fb;
+  --accent-foreground: #173b63;
+  --sky: #78b7e5;
+  --sky-foreground: #0e2a47;
+  --destructive: #b64a4a;
+  --destructive-foreground: #ffffff;
+  --border: #d7e1ea;
+  --input: #d7e1ea;
+  --ring: #78b7e5;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.005em;
+    color: var(--primary-dark);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility prose-reflection {
+  font-family: var(--font-display);
+  font-size: 1.0625rem;
+  line-height: 1.9;
+  color: var(--color-foreground);
+
+  & p + p {
+    margin-top: 1.35rem;
+  }
+}
+
+@utility card-soft {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-soft);
+}
+
+@utility eyebrow {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
