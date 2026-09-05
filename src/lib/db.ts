@@ -266,3 +266,169 @@ export function excerptOf(text: string | null, max = 160) {
   const clean = (text ?? "").replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
 }
+
+/* ------------------------------------------------------------------------- *
+ * Estado real da sessão no servidor — o servidor é a fonte de verdade.
+ * ------------------------------------------------------------------------- */
+
+export type SessionStatus =
+  "draft" | "processing" | "review" | "approved" | "audio_processing" | "completed" | "failed";
+
+const SESSION_STATUSES: SessionStatus[] = [
+  "draft",
+  "processing",
+  "review",
+  "approved",
+  "audio_processing",
+  "completed",
+  "failed",
+];
+
+export function normalizeStatus(status: string | null | undefined): SessionStatus {
+  return SESSION_STATUSES.includes(status as SessionStatus) ? (status as SessionStatus) : "draft";
+}
+
+/** Sessão do dia, sem criar nada — usada pela tela Hoje. */
+export async function loadSessionByDate(
+  userId: string,
+  date = todayISO(),
+): Promise<ReflectionSession | null> {
+  if (isDemoActive()) return null;
+  const res = await supabase
+    .from("reflection_sessions")
+    .select("id, reflection_date, status")
+    .eq("user_id", userId)
+    .eq("reflection_date", date)
+    .maybeSingle();
+  if (res.error) return fail("loadSessionByDate", res.error);
+  return (res.data as ReflectionSession) ?? null;
+}
+
+export type GeneratedVersion = {
+  id: string;
+  versionNumber: number;
+  title: string | null;
+  body: string;
+  status: string | null;
+};
+
+/** Versões já geradas para a sessão (V1/V2), em ordem. */
+export async function loadGenerations(sessionId: string): Promise<GeneratedVersion[]> {
+  if (isDemoActive()) return [];
+  const res = await supabase
+    .from("generated_reflections")
+    .select("id, version_number, title, body, status")
+    .eq("session_id", sessionId)
+    .order("version_number", { ascending: true });
+  if (res.error) {
+    fail("loadGenerations", res.error);
+    return [];
+  }
+  return (res.data ?? []).map((row) => ({
+    id: row.id as string,
+    versionNumber: row.version_number as number,
+    title: (row.title as string | null) ?? null,
+    body: (row.body as string) ?? "",
+    status: (row.status as string | null) ?? null,
+  }));
+}
+
+export type ApprovedDetail = ApprovedReflection & {
+  session_id: string;
+  source_generation_id: string | null;
+};
+
+export async function loadSessionApproved(sessionId: string): Promise<ApprovedDetail | null> {
+  if (isDemoActive()) return null;
+  const res = await supabase
+    .from("approved_reflections")
+    .select("id, title, body, approved_at, session_id, source_generation_id")
+    .eq("session_id", sessionId)
+    .maybeSingle();
+  if (res.error) return fail("loadSessionApproved", res.error);
+  return (res.data as ApprovedDetail) ?? null;
+}
+
+/** Detalhes de uma reflexão aprovada — RLS garante que só o dono carrega. */
+export async function getApprovedById(id: string): Promise<ApprovedDetail | null> {
+  if (isDemoActive()) {
+    const found = listDemoApproved().find((r) => r.id === id);
+    return found ? { ...found, session_id: demoSessionId(), source_generation_id: null } : null;
+  }
+  const res = await supabase
+    .from("approved_reflections")
+    .select("id, title, body, approved_at, session_id, source_generation_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (res.error) return fail("getApprovedById", res.error);
+  return (res.data as ApprovedDetail) ?? null;
+}
+
+export type AudioState =
+  | { state: "none" }
+  | { state: "processing" }
+  | { state: "ready"; url: string }
+  | { state: "failed" };
+
+/** Lê (sem gerar nada) o estado do áudio de uma reflexão aprovada. */
+export async function loadAudioState(approvedReflectionId: string): Promise<AudioState> {
+  if (isDemoActive()) return { state: "none" };
+  const res = await supabase
+    .from("generated_audio")
+    .select("status, storage_path")
+    .eq("approved_reflection_id", approvedReflectionId)
+    .maybeSingle();
+  if (res.error) {
+    fail("loadAudioState", res.error);
+    return { state: "none" };
+  }
+  const row = res.data as { status: string | null; storage_path: string | null } | null;
+  if (!row) return { state: "none" };
+  if (row.status === "ready" && row.storage_path) {
+    const signed = await supabase.storage
+      .from("reflection-output-audio")
+      .createSignedUrl(row.storage_path, 3600);
+    if (signed.data?.signedUrl) return { state: "ready", url: signed.data.signedUrl };
+    fail("loadAudioState/signedUrl", signed.error);
+    return { state: "processing" };
+  }
+  if (row.status === "failed") return { state: "failed" };
+  return { state: "processing" };
+}
+
+/** Código de erro devolvido por uma Edge Function, quando existir. */
+export async function invokeErrorCode(error: unknown): Promise<string | null> {
+  const context = (error as { context?: unknown } | null)?.context;
+  if (context instanceof Response) {
+    try {
+      const parsed = (await context.clone().json()) as { error?: string };
+      return parsed?.error ?? null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Pede a narração da reflexão aprovada. A Edge Function generate-audio já é
+ * atômica (claim_audio_job): se outra chamada estiver em curso ela responde
+ * audio_already_processing, o que aqui é tratado como "preparando", não erro.
+ */
+export async function requestAudio(approvedReflectionId: string): Promise<AudioState> {
+  if (isDemoActive()) return { state: "none" };
+  const { data, error } = await supabase.functions.invoke<{ url: string | null }>(
+    "generate-audio",
+    {
+      body: { approvedReflectionId },
+    },
+  );
+  if (error) {
+    const code = await invokeErrorCode(error);
+    if (code === "audio_already_processing") return { state: "processing" };
+    fail("requestAudio", error);
+    return { state: "failed" };
+  }
+  if (data?.url) return { state: "ready", url: data.url };
+  return { state: "processing" };
+}

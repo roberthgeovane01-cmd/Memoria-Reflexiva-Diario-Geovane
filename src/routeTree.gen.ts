@@ -13,8 +13,9 @@ import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedCriarRouteImport } from './routes/_authenticated/criar'
-import { Route as AuthenticatedHistoricoRouteImport } from './routes/_authenticated/historico'
 import { Route as AuthenticatedMemoriaRouteImport } from './routes/_authenticated/memoria'
+import { Route as AuthenticatedHistoricoIndexRouteImport } from './routes/_authenticated/historico.index'
+import { Route as AuthenticatedHistoricoIdRouteImport } from './routes/_authenticated/historico.$id'
 
 const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
   id: '/_authenticated',
@@ -35,53 +36,65 @@ const AuthenticatedCriarRoute = AuthenticatedCriarRouteImport.update({
   path: '/criar',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
-const AuthenticatedHistoricoRoute = AuthenticatedHistoricoRouteImport.update({
-  id: '/historico',
-  path: '/historico',
-  getParentRoute: () => AuthenticatedRouteRoute,
-} as any)
 const AuthenticatedMemoriaRoute = AuthenticatedMemoriaRouteImport.update({
   id: '/memoria',
   path: '/memoria',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedHistoricoIndexRoute =
+  AuthenticatedHistoricoIndexRouteImport.update({
+    id: '/historico/',
+    path: '/historico/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedHistoricoIdRoute =
+  AuthenticatedHistoricoIdRouteImport.update({
+    id: '/historico/$id',
+    path: '/historico/$id',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/auth': typeof AuthRoute
   '/criar': typeof AuthenticatedCriarRoute
-  '/historico': typeof AuthenticatedHistoricoRoute
   '/memoria': typeof AuthenticatedMemoriaRoute
+  '/historico/$id': typeof AuthenticatedHistoricoIdRoute
+  '/historico/': typeof AuthenticatedHistoricoIndexRoute
 }
 export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/criar': typeof AuthenticatedCriarRoute
-  '/historico': typeof AuthenticatedHistoricoRoute
   '/memoria': typeof AuthenticatedMemoriaRoute
   '/': typeof AuthenticatedIndexRoute
+  '/historico/$id': typeof AuthenticatedHistoricoIdRoute
+  '/historico': typeof AuthenticatedHistoricoIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/auth': typeof AuthRoute
   '/_authenticated/criar': typeof AuthenticatedCriarRoute
-  '/_authenticated/historico': typeof AuthenticatedHistoricoRoute
   '/_authenticated/memoria': typeof AuthenticatedMemoriaRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/historico/$id': typeof AuthenticatedHistoricoIdRoute
+  '/_authenticated/historico/': typeof AuthenticatedHistoricoIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/criar' | '/historico' | '/memoria'
+  fullPaths:
+    '/' | '/auth' | '/criar' | '/memoria' | '/historico/$id' | '/historico/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/auth' | '/criar' | '/historico' | '/memoria' | '/'
+  to: '/auth' | '/criar' | '/memoria' | '/' | '/historico/$id' | '/historico'
   id:
     | '__root__'
     | '/_authenticated'
     | '/auth'
     | '/_authenticated/criar'
-    | '/_authenticated/historico'
     | '/_authenticated/memoria'
     | '/_authenticated/'
+    | '/_authenticated/historico/$id'
+    | '/_authenticated/historico/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -119,13 +132,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedCriarRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/historico': {
-      id: '/_authenticated/historico'
-      path: '/historico'
-      fullPath: '/historico'
-      preLoaderRoute: typeof AuthenticatedHistoricoRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/memoria': {
       id: '/_authenticated/memoria'
       path: '/memoria'
@@ -133,21 +139,37 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedMemoriaRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/historico/': {
+      id: '/_authenticated/historico/'
+      path: '/historico'
+      fullPath: '/historico/'
+      preLoaderRoute: typeof AuthenticatedHistoricoIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/historico/$id': {
+      id: '/_authenticated/historico/$id'
+      path: '/historico/$id'
+      fullPath: '/historico/$id'
+      preLoaderRoute: typeof AuthenticatedHistoricoIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
   }
 }
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedCriarRoute: typeof AuthenticatedCriarRoute
-  AuthenticatedHistoricoRoute: typeof AuthenticatedHistoricoRoute
   AuthenticatedMemoriaRoute: typeof AuthenticatedMemoriaRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedHistoricoIdRoute: typeof AuthenticatedHistoricoIdRoute
+  AuthenticatedHistoricoIndexRoute: typeof AuthenticatedHistoricoIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedCriarRoute: AuthenticatedCriarRoute,
-  AuthenticatedHistoricoRoute: AuthenticatedHistoricoRoute,
   AuthenticatedMemoriaRoute: AuthenticatedMemoriaRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedHistoricoIdRoute: AuthenticatedHistoricoIdRoute,
+  AuthenticatedHistoricoIndexRoute: AuthenticatedHistoricoIndexRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =
