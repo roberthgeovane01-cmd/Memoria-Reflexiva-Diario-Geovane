@@ -46,17 +46,27 @@ autenticado (`verify_jwt = true`), nunca expõem chaves ao navegador:
 - `approve-reflection` — aprovação idempotente: `approved_reflections` tem
   `UNIQUE(session_id)`, então uma segunda chamada nunca cria outro registro
   nem sobrescreve a aprovação existente, só a devolve. Marca a geração
-  escolhida como `approved` e as demais da sessão como `superseded`.
+  escolhida como `approved` e as demais da sessão como `superseded`. Valida
+  que a geração referenciada pertence exatamente à sessão sendo aprovada
+  (não só ao usuário) — sem isso seria possível aprovar a sessão A com uma
+  geração da sessão B do mesmo usuário.
 - `generate-audio` — narra a reflexão aprovada via ElevenLabs e guarda o
   resultado no Storage. Usa `claim_audio_job()` (função Postgres) para
   garantir que só uma invocação por vez chega a chamar o ElevenLabs para o
   mesmo `approved_reflection_id`, mesmo sob concorrência real.
 
 **Máquina de estados de `reflection_sessions`:** `draft` → `processing` →
-`review` → `approved` → `audio_processing` → `completed`, com reversão ao
-status anterior em qualquer falha recuperável. Depois de `approved`, triggers
-no banco (não só RLS) bloqueiam UPDATE em `daily_sources`/
-`reflection_comments` e INSERT em `generated_reflections` para aquela sessão.
+`review` → `approved` → `audio_processing` → `completed`. Em falha
+recuperável, a sessão volta ao status anterior — mas nunca é rebaixada se,
+nesse meio-tempo, ela já tiver sido aprovada/passado para `audio_processing`/
+`completed` (aprovação é fato consumado, mesmo sob corrida). Depois de
+`approved`, triggers no banco (não só RLS) bloqueiam UPDATE **e DELETE** em
+`daily_sources`/`reflection_comments` e INSERT em `generated_reflections`
+para aquela sessão — rascunhos pré-aprovação continuam livres.
+
+`claim_audio_job` (usada por `generate-audio`) é `EXECUTE`-revogada de
+`anon`/`authenticated`/`public` e só concedida a `service_role` — não é
+chamável diretamente por um cliente autenticado via PostgREST.
 
 **Secrets necessários** (Dashboard → Project Settings → Edge Functions →
 Secrets, ou `supabase secrets set`) — os valores já estão configurados no

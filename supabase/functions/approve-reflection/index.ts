@@ -91,13 +91,18 @@ Deno.serve(async (req) => {
   }
 
   if (body.generatedReflectionId) {
+    // A geração precisa pertencer ao usuário E à sessão exata sendo aprovada
+    // — sem isso seria possível aprovar a sessão A referenciando uma versão
+    // gerada para a sessão B do mesmo usuário.
     const { data: generation } = await admin
       .from("generated_reflections")
-      .select("id")
+      .select("id, session_id")
       .eq("id", body.generatedReflectionId)
       .eq("user_id", userId)
       .maybeSingle();
-    if (!generation) return jsonResponse({ error: "generation_not_found" }, 404);
+    if (!generation || generation.session_id !== sessionId) {
+      return jsonResponse({ error: "generation_does_not_belong_to_session" }, 400);
+    }
   }
 
   let approvedRow: ApprovedRow | null = null;

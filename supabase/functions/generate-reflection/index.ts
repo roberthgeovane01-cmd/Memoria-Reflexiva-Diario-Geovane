@@ -137,7 +137,21 @@ Deno.serve(async (req) => {
   // sessao ao status anterior (nunca deixa-la travada em "processing").
   await admin.from("reflection_sessions").update({ status: "processing" }).eq("id", sessionId);
 
+  const CONSUMED_STATUSES = new Set(["approved", "audio_processing", "completed"]);
+
   async function revertSessionStatus() {
+    // A aprovacao e um fato consumado: se a sessao avancou para um desses
+    // estados enquanto esta geracao estava em andamento (ex.: aprovada em
+    // paralelo, o que tambem faz o INSERT em generated_reflections falhar
+    // via trigger), nunca a rebaixamos de volta usando o previousStatus
+    // capturado no inicio desta chamada - ele esta obsoleto.
+    const [{ data: current }, { data: approved }] = await Promise.all([
+      admin.from("reflection_sessions").select("status").eq("id", sessionId).maybeSingle(),
+      admin.from("approved_reflections").select("id").eq("session_id", sessionId).maybeSingle(),
+    ]);
+    if (approved || (current && CONSUMED_STATUSES.has(current.status))) {
+      return;
+    }
     await admin.from("reflection_sessions").update({ status: previousStatus }).eq("id", sessionId);
   }
 
